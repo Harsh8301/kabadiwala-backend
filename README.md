@@ -1,95 +1,65 @@
-# Kabadiwala Connect detection API
+# Kabadiwala Connect detection backend
 
-Minimal Node.js API that accepts a scrap image, calls the configured Roboflow
-model, and returns a normalized material suggestion. Uploaded images are kept in
-memory and are never written to disk. The Roboflow API key stays on the server.
+Deploy this repository alone to Vercel. The Flutter APK is built separately and
+uses the backend's HTTPS origin. Vercel Functions in `api/` handle `/health` and
+`/predict`; no persistent Node server, static output, or Android files are
+deployed.
 
-## API contract
+Current production origin: `https://kabadiwala-backend.vercel.app`.
 
-### `GET /health`
+## Vercel project settings
 
-Returns `200`:
+| Setting | Value |
+| --- | --- |
+| Repository or folder | `kabadiwala-backend` |
+| Root Directory | `.` when importing this repository; `kabadiwala-backend` only if importing a parent repository |
+| Framework Preset | Other |
+| Build Command | Leave blank; Vercel packages the `api/` functions |
+| Output Directory | Leave blank |
+| Node.js version | 24.x |
 
-```json
-{
-  "status": "ok",
-  "service": "kabadiwala-backend",
-  "roboflowConfigured": true
-}
-```
+Vercel must install the dependencies from `package-lock.json`. Add these
+Environment Variables for Production before deploying:
 
-### `POST /predict`
+| Name | Value |
+| --- | --- |
+| `ROBOFLOW_API_KEY` | Private Roboflow API key for the deployed model |
+| `ROBOFLOW_MODEL_ID` | Exact `project/version` model ID from Roboflow |
 
-Send `multipart/form-data` with one field named `image`. JPEG, PNG, and WebP
-files up to 4 MB are accepted. A successful response is:
+Optional: `ROBOFLOW_CONFIDENCE_THRESHOLD` (default `0.45`),
+`ROBOFLOW_OVERLAP_THRESHOLD` (default `0.30`).
 
-```json
-{
-  "success": true,
-  "status": "detected",
-  "categoryId": "battery",
-  "className": "battery",
-  "confidence": 0.94,
-  "predictions": [
-    {
-      "categoryId": "battery",
-      "className": "battery",
-      "confidence": 0.94,
-      "x": 120,
-      "y": 180,
-      "width": 80,
-      "height": 160
-    }
-  ],
-  "image": { "width": 640, "height": 480 }
-}
-```
+Never put `ROBOFLOW_API_KEY` in Flutter, a Dart define, Git, or a Vercel build
+argument. `.env` is ignored by Git; `.env.example` lists variable names only.
+Production reads Vercel Environment Variables via `process.env`.
 
-Low-confidence or unsupported classes return `200` with `status: "uncertain"`
-so the app can offer manual selection. Invalid uploads use `400`, `413`, or
-`415`; configuration and upstream failures use sanitized `5xx` responses.
+## HTTPS API contract
 
-## Local development
+- `GET https://<deployment-domain>/health` returns `200` JSON with
+  `status: "ok"` and `roboflowConfigured: true` when both required variables
+  are present. This checks configuration, not model accuracy or key validity.
+- `POST https://<deployment-domain>/predict` accepts the Flutter app's
+  `multipart/form-data` request with exactly one file field named `image`.
+  JPEG, PNG, and WebP are accepted up to 4 MiB. Roboflow receives the image
+  through a server-side request with a Bearer authorization header.
+- A successful inference returns `success`, `status`, `categoryId`,
+  `className`, `confidence`, `predictions`, and `image` dimensions. Unknown
+  classes and low confidence return `status: "uncertain"`; the app offers
+  manual selection. Invalid uploads and Roboflow failures return sanitized
+  error codes.
 
-Use Node.js 24. Copy `.env.example` to `.env`, fill in the server-side values,
-then run:
+The class map in `lib/roboflow.js` must be checked against the labels of the
+actual deployed model. A device such as a phone does not become "mixed
+plastics" automatically. Model accuracy requires labeled field images.
+
+## Checks before deployment
 
 ```powershell
 npm ci
-npm test
-npm run build
-npm start
+npm run check
 ```
 
-The local routes are `http://127.0.0.1:5001/health` and
-`http://127.0.0.1:5001/predict`.
-
-## Environment variables
-
-- `ROBOFLOW_API_KEY` (required)
-- `ROBOFLOW_MODEL_ID` (required; `project/version`)
-- `ROBOFLOW_PROJECT_ID` and `ROBOFLOW_MODEL_VERSION` (supported together as a
-  legacy alternative when `ROBOFLOW_MODEL_ID` is absent)
-- `ROBOFLOW_CONFIDENCE_THRESHOLD` (optional, default `0.45`)
-- `ROBOFLOW_OVERLAP_THRESHOLD` (optional, default `0.30`)
-- `ALLOWED_ORIGINS` (comma-separated Flutter Web origins; mobile clients do not
-  send an Origin header)
-- `PORT` (local server only, default `5001`)
-
-Never commit `.env`. Configure the same Roboflow values in Vercel project
-settings for Preview and Production.
-
-## Vercel
-
-Deploy this directory as the Vercel project root. `api/health.js` and
-`api/predict.js` are the serverless entry points. `vercel.json` rewrites the
-public `/health` and `/predict` paths to those functions and gives inference a
-30-second maximum duration. No custom build command or persistent server is
-required.
-
-Build the Flutter app with the deployed HTTPS origin (without a trailing API
-path):
-
-```powershell
-flutter build apk --dart-define=API_BASE_URL=https://YOUR_PROJECT.vercel.app
-```
+The separate Flutter repository's `tool/build_production_apk.ps1` requires a
+deployed HTTPS origin, confirms `/health`, then embeds that origin in the APK
+through `API_BASE_URL`. Test `/predict` with a labeled scrap photo and an
+installed APK on a device before calling the release ready.

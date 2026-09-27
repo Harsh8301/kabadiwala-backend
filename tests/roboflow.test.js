@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const { Readable } = require("node:stream");
 const { getRoboflowConfig } = require("../lib/config");
+const healthHandler = require("../api/health");
 const { detectionHandler } = require("../lib/detection-handler");
 const { MAX_IMAGE_BYTES, detectedMimeType, parseImageUpload } = require("../lib/multipart");
 const { mapRoboflowClass, normalizeLabel, normalizeRoboflowResponse,
@@ -44,6 +45,17 @@ test("normalizes labels", () => {
   assert.equal(normalizeLabel(" Printed Circuit__Board "), "printed-circuit-board");
 });
 
+test("Vercel health function reports configuration without exposing secrets", async () => {
+  const request = { method: "GET", headers: {} };
+  const response = responseRecorder();
+  await healthHandler(request, response);
+  const body = JSON.parse(response.body);
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.status, "ok");
+  assert.equal(typeof body.roboflowConfigured, "boolean");
+  assert.doesNotMatch(response.body, /apiKey|ROBOFLOW_API_KEY/);
+});
+
 test("combined model ID takes precedence over legacy model variables", () => {
   Object.assign(process.env, {
     ROBOFLOW_API_KEY: "test-placeholder",
@@ -61,9 +73,12 @@ test("maps supported classes and unknowns", () => {
   assert.equal(mapRoboflowClass("copper wire"), "cables");
   assert.equal(mapRoboflowClass("battery-cell"), "battery");
   assert.equal(mapRoboflowClass("CRT Monitor"), "crt");
-  assert.equal(mapRoboflowClass("phone"), "mixed");
-  assert.equal(mapRoboflowClass("watch"), "mixed");
-  assert.equal(mapRoboflowClass("tablet"), "mixed");
+  assert.equal(mapRoboflowClass("lcd panel"), "lcd");
+  assert.equal(mapRoboflowClass("magnet assembly"), "magnets");
+  assert.equal(mapRoboflowClass("mixed plastics"), "mixed_plastics");
+  assert.equal(mapRoboflowClass("phone"), "other");
+  assert.equal(mapRoboflowClass("watch"), "other");
+  assert.equal(mapRoboflowClass("tablet"), "other");
   assert.equal(mapRoboflowClass("plastic bottle"), "other");
 });
 
@@ -159,20 +174,45 @@ test("rejects wrong methods and content types", async () => {
 
 test("normalizes a successful provider response", async () => {
   Object.assign(process.env, { ROBOFLOW_API_KEY: "test-placeholder", ROBOFLOW_PROJECT_ID: "project", ROBOFLOW_MODEL_VERSION: "1" });
+  let outbound;
   const result = await callHandler({
     parse: async () => ({ buffer: Buffer.from([1]), mimeType: "image/jpeg" }),
-    fetch: async () => ({
+    fetch: async (url, options) => { outbound = { url, options }; return ({
       ok: true,
       json: async () => ({
-        predictions: [{ class: "phone", confidence: 0.91 }],
+        predictions: [{ class: "battery", confidence: 0.91 }],
         image: { width: 640, height: 480 }
       })
-    })
+    }); }
   });
   assert.equal(result.status, 200);
   assert.equal(result.body.status, "detected");
-  assert.equal(result.body.categoryId, "mixed");
+  assert.equal(result.body.categoryId, "battery");
   assert.deepEqual(result.body.image, { width: 640, height: 480 });
+  assert.equal(outbound.options.headers.Authorization, "Bearer test-placeholder");
+  assert.equal(outbound.options.body.get("file").type, "image/jpeg");
+  assert.equal(outbound.options.body.get("file").size, 1);
+  assert.match(outbound.url, /^https:\/\/serverless\.roboflow\.com\//);
+  assert.doesNotMatch(outbound.url, /test-placeholder/);
+});
+
+test("unsupported provider class remains uncertain", () => {
+  const result = normalizeRoboflowResponse({ predictions: [{ class: "phone", confidence: 0.91 }] });
+  assert.equal(result.status, "uncertain");
+  assert.equal(result.categoryId, null);
+});
+
+test("provider rejection and malformed response are sanitized", async () => {
+  const parse = async () => ({ buffer: Buffer.from([1]), mimeType: "image/jpeg" });
+  const rejected = await callHandler({ parse, fetch: async () => ({ ok: false, status: 401 }) });
+  assert.equal(rejected.status, 503);
+  assert.equal(rejected.body.code, "INFERENCE_NOT_AUTHORIZED");
+  const malformed = await callHandler({ parse, fetch: async () => ({ ok: true, json: async () => ({ error: "bad" }) }) });
+  assert.equal(malformed.status, 502);
+  assert.equal(malformed.body.code, "INVALID_INFERENCE_RESPONSE");
+  const unavailable = await callHandler({ parse, fetch: async () => { throw new Error("provider down"); } });
+  assert.equal(unavailable.status, 502);
+  assert.equal(unavailable.body.code, "INFERENCE_UNAVAILABLE");
 });
 
 test("upstream errors never expose secret or stack", async () => {
