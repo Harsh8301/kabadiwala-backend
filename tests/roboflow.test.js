@@ -1,7 +1,9 @@
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
+const { Readable } = require("node:stream");
+const { getRoboflowConfig } = require("../lib/config");
 const { detectionHandler } = require("../lib/detection-handler");
-const { detectedMimeType } = require("../lib/multipart");
+const { MAX_IMAGE_BYTES, detectedMimeType, parseImageUpload } = require("../lib/multipart");
 const { mapRoboflowClass, normalizeLabel, normalizeRoboflowResponse,
   selectPrimaryPrediction } = require("../lib/roboflow");
 
@@ -16,6 +18,21 @@ function responseRecorder() {
   return response;
 }
 
+function multipartRequest(content, { fieldName = "image", mimeType = "image/jpeg" } = {}) {
+  const boundary = "kabadiwala-test-boundary";
+  const body = Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${fieldName}"; filename="test.jpg"\r\nContent-Type: ${mimeType}\r\n\r\n`),
+    content,
+    Buffer.from(`\r\n--${boundary}--\r\n`)
+  ]);
+  const request = Readable.from(body);
+  request.headers = {
+    "content-type": `multipart/form-data; boundary=${boundary}`,
+    "content-length": String(body.length)
+  };
+  return request;
+}
+
 async function callHandler({ method = "POST", contentType = "multipart/form-data; boundary=x", parse, fetch }) {
   const request = { method, headers: { "content-type": contentType } };
   const response = responseRecorder();
@@ -27,11 +44,31 @@ test("normalizes labels", () => {
   assert.equal(normalizeLabel(" Printed Circuit__Board "), "printed-circuit-board");
 });
 
+test("combined model ID takes precedence over legacy model variables", () => {
+  Object.assign(process.env, {
+    ROBOFLOW_API_KEY: "test-placeholder",
+    ROBOFLOW_MODEL_ID: "correct-project/7",
+    ROBOFLOW_PROJECT_ID: "stale-project",
+    ROBOFLOW_MODEL_VERSION: "1"
+  });
+  const config = getRoboflowConfig();
+  assert.equal(config.projectId, "correct-project");
+  assert.equal(config.modelVersion, "7");
+  delete process.env.ROBOFLOW_MODEL_ID;
+});
+
 test("maps supported classes and unknowns", () => {
   assert.equal(mapRoboflowClass("copper wire"), "cables");
   assert.equal(mapRoboflowClass("battery-cell"), "battery");
   assert.equal(mapRoboflowClass("CRT Monitor"), "crt");
+  assert.equal(mapRoboflowClass("phone"), "mixed");
+  assert.equal(mapRoboflowClass("watch"), "mixed");
+  assert.equal(mapRoboflowClass("tablet"), "mixed");
   assert.equal(mapRoboflowClass("plastic bottle"), "other");
+});
+
+test("uses a Vercel-safe upload limit", () => {
+  assert.equal(MAX_IMAGE_BYTES, 4 * 1024 * 1024);
 });
 
 test("selects highest reliable supported prediction", () => {
@@ -84,6 +121,58 @@ test("missing image and invalid type are handled", async () => {
   const invalid = await callHandler({ parse: async () => { throw Object.assign(new Error(), { code: "INVALID_FILE_TYPE" }); } });
   assert.equal(invalid.status, 400);
   assert.equal(invalid.body.code, "INVALID_FILE_TYPE");
+});
+
+test("multipart parser accepts the image field and rejects invalid files", async () => {
+  const accepted = await parseImageUpload(multipartRequest(Buffer.from([0xff, 0xd8, 0xff, 0x00])));
+  assert.equal(accepted.mimeType, "image/jpeg");
+
+  await assert.rejects(
+    parseImageUpload(multipartRequest(Buffer.from("not-an-image"), { mimeType: "image/jpeg" })),
+    error => error.code === "INVALID_FILE_TYPE"
+  );
+  await assert.rejects(
+    parseImageUpload(multipartRequest(Buffer.from([0xff, 0xd8, 0xff, 0x00]), { fieldName: "file" })),
+    error => error.code === "MISSING_IMAGE"
+  );
+});
+
+test("multipart parser rejects oversized images", async () => {
+  const oversized = Buffer.alloc(MAX_IMAGE_BYTES + 1, 0);
+  oversized[0] = 0xff;
+  oversized[1] = 0xd8;
+  oversized[2] = 0xff;
+  await assert.rejects(
+    parseImageUpload(multipartRequest(oversized)),
+    error => error.code === "FILE_TOO_LARGE"
+  );
+});
+
+test("rejects wrong methods and content types", async () => {
+  const wrongMethod = await callHandler({ method: "GET" });
+  assert.equal(wrongMethod.status, 405);
+  assert.equal(wrongMethod.body.code, "METHOD_NOT_ALLOWED");
+  const wrongType = await callHandler({ contentType: "application/json" });
+  assert.equal(wrongType.status, 415);
+  assert.equal(wrongType.body.code, "UNSUPPORTED_MEDIA_TYPE");
+});
+
+test("normalizes a successful provider response", async () => {
+  Object.assign(process.env, { ROBOFLOW_API_KEY: "test-placeholder", ROBOFLOW_PROJECT_ID: "project", ROBOFLOW_MODEL_VERSION: "1" });
+  const result = await callHandler({
+    parse: async () => ({ buffer: Buffer.from([1]), mimeType: "image/jpeg" }),
+    fetch: async () => ({
+      ok: true,
+      json: async () => ({
+        predictions: [{ class: "phone", confidence: 0.91 }],
+        image: { width: 640, height: 480 }
+      })
+    })
+  });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.status, "detected");
+  assert.equal(result.body.categoryId, "mixed");
+  assert.deepEqual(result.body.image, { width: 640, height: 480 });
 });
 
 test("upstream errors never expose secret or stack", async () => {

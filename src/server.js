@@ -3,7 +3,7 @@ const http = require("node:http");
 
 require("dotenv").config({ quiet: true });
 
-const detectionHandler = require("../api/detection/scrap");
+const detectionHandler = require("../api/predict");
 const healthHandler = require("../api/health");
 
 function notFound(response) {
@@ -23,11 +23,11 @@ function createServer() {
     const path = new URL(request.url || "/", "http://localhost").pathname;
 
     try {
-      if (path === "/api/health") {
+      if (path === "/health" || path === "/api/health") {
         await healthHandler(request, response);
         return;
       }
-      if (path === "/api/detection/scrap" || path === "/api/detect") {
+      if (path === "/predict" || path === "/api/predict") {
         await detectionHandler(request, response);
         return;
       }

@@ -1,8 +1,21 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "devCommand": null,
-  "buildCommand": null,
-  "outputDirectory": ".",
+  "rewrites": [
+    {
+      "source": "/health",
+      "destination": "/api/health"
+    },
+    {
+      "source": "/predict",
+      "destination": "/api/predict"
+    }
+  ],
+  "functions": {
+    "api/predict.js": {
+      "maxDuration": 30
+    }
+  },
   "headers": [
     {
       "source": "/(.*)",

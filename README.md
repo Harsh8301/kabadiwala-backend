@@ -1,72 +1,95 @@
-# Kabadiwala Connect
+# Kabadiwala Connect detection API
 
-Kabadiwala Connect combines a multilingual Flutter collection and traceability
-app with a Node.js detection backend. The backend keeps the Roboflow credential
-off the mobile client and does not write uploaded images to disk.
+Minimal Node.js API that accepts a scrap image, calls the configured Roboflow
+model, and returns a normalized material suggestion. Uploaded images are kept in
+memory and are never written to disk. The Roboflow API key stays on the server.
 
-## Flutter app
+## API contract
 
-The app supports collector onboarding, scrap-photo capture, AI-assisted material
-review, safety acknowledgements, price confirmation, recycler matching, QR
-handover, payment tracking, local persistence, and a lot ledger.
+### `GET /health`
 
-Run it against the local backend:
+Returns `200`:
 
-```powershell
-flutter pub get
-flutter run --dart-define=API_BASE_URL=http://10.0.2.2:5001
+```json
+{
+  "status": "ok",
+  "service": "kabadiwala-backend",
+  "roboflowConfigured": true
+}
 ```
 
-For a physical Android device, replace `10.0.2.2` with the development
-computer's LAN IPv4 address. Production builds must use an HTTPS backend.
+### `POST /predict`
 
-## Detection backend
+Send `multipart/form-data` with one field named `image`. JPEG, PNG, and WebP
+files up to 4 MB are accepted. A successful response is:
 
-The backend exposes:
-
-- `POST /api/detection/scrap` — accepts one JPEG, PNG, or WebP in multipart field
-  `image` (maximum 8 MB) and returns a normalized material suggestion.
-- `GET /api/health` — reports service health and whether Roboflow is configured.
-- `POST /api/detect` — backward-compatible detection alias.
-
-Copy `.env.example` to `.env` and provide the private configuration locally:
-
-```text
-PORT=5001
-ROBOFLOW_API_KEY=replace_with_private_key
-ROBOFLOW_PROJECT_ID=kabadiwala-scrap
-ROBOFLOW_MODEL_VERSION=1
-ROBOFLOW_CONFIDENCE_THRESHOLD=0.45
-ROBOFLOW_OVERLAP_THRESHOLD=0.30
-ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
+```json
+{
+  "success": true,
+  "status": "detected",
+  "categoryId": "battery",
+  "className": "battery",
+  "confidence": 0.94,
+  "predictions": [
+    {
+      "categoryId": "battery",
+      "className": "battery",
+      "confidence": 0.94,
+      "x": 120,
+      "y": 180,
+      "width": 80,
+      "height": 160
+    }
+  ],
+  "image": { "width": 640, "height": 480 }
+}
 ```
 
-Do not commit `.env` or place the Roboflow key in Flutter source. Start and test
-the backend with:
+Low-confidence or unsupported classes return `200` with `status: "uncertain"`
+so the app can offer manual selection. Invalid uploads use `400`, `413`, or
+`415`; configuration and upstream failures use sanitized `5xx` responses.
+
+## Local development
+
+Use Node.js 24. Copy `.env.example` to `.env`, fill in the server-side values,
+then run:
 
 ```powershell
-npm install
+npm ci
 npm test
 npm run build
 npm start
 ```
 
-Cloud inference requires internet access and valid model credentials. Empty,
-low-confidence, and unknown-only results are returned as uncertain and never
-default to PCB. The AI result is an approximate suggestion; it does not certify
-material composition, purity, weight, safety, or market value.
+The local routes are `http://127.0.0.1:5001/health` and
+`http://127.0.0.1:5001/predict`.
 
-## Vercel deployment
+## Environment variables
 
-Configure the Roboflow variables and `ALLOWED_ORIGINS` in Vercel for Preview and
-Production, then deploy from the repository root. `/api` contains the serverless
-entry points, while the local Node server shares the same handlers and validation.
+- `ROBOFLOW_API_KEY` (required)
+- `ROBOFLOW_MODEL_ID` (required; `project/version`)
+- `ROBOFLOW_PROJECT_ID` and `ROBOFLOW_MODEL_VERSION` (supported together as a
+  legacy alternative when `ROBOFLOW_MODEL_ID` is absent)
+- `ROBOFLOW_CONFIDENCE_THRESHOLD` (optional, default `0.45`)
+- `ROBOFLOW_OVERLAP_THRESHOLD` (optional, default `0.30`)
+- `ALLOWED_ORIGINS` (comma-separated Flutter Web origins; mobile clients do not
+  send an Origin header)
+- `PORT` (local server only, default `5001`)
 
-## Verification
+Never commit `.env`. Configure the same Roboflow values in Vercel project
+settings for Preview and Production.
+
+## Vercel
+
+Deploy this directory as the Vercel project root. `api/health.js` and
+`api/predict.js` are the serverless entry points. `vercel.json` rewrites the
+public `/health` and `/predict` paths to those functions and gives inference a
+30-second maximum duration. No custom build command or persistent server is
+required.
+
+Build the Flutter app with the deployed HTTPS origin (without a trailing API
+path):
 
 ```powershell
-npm test
-npm run build
-flutter analyze
-flutter test
+flutter build apk --dart-define=API_BASE_URL=https://YOUR_PROJECT.vercel.app
 ```

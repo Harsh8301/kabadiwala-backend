@@ -2,8 +2,11 @@
   "name": "kabadiwala-backend",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
-    "build": "node --check src/server.js && node --check api/detect.js && node --check api/detection/scrap.js && node --check api/health.js && node --check lib/detection-handler.js && node --check lib/multipart.js && node --check lib/roboflow.js && node --check tests/roboflow.test.js",
+    "build": "node --check src/server.js && node --check api/predict.js && node --check api/health.js && node --check lib/config.js && node --check lib/http.js && node --check lib/detection-handler.js && node --check lib/multipart.js && node --check lib/roboflow.js && node --check tests/roboflow.test.js",
     "test": "node tests/roboflow.test.js",
     "start": "node src/server.js",
     "dev": "node --watch src/server.js"
