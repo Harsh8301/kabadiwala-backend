@@ -4,6 +4,10 @@
   "buildCommand": "",
   "rewrites": [
     {
+      "source": "/",
+      "destination": "/api/index"
+    },
+    {
       "source": "/health",
       "destination": "/api/health"
     },
