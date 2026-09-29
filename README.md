@@ -5,7 +5,10 @@ uses the backend's HTTPS origin. Vercel Functions in `api/` handle `/health` and
 `/predict`. The marketplace function handles authenticated workflow requests,
 and `public/admin.html` is the administrator web panel.
 
-Current production origin: `https://kabadiwala-backend.vercel.app`.
+Current production origin: `https://kabadiwala-backend-rho.vercel.app`.
+
+Open the root URL to see the API routes. Use `/health` to check service status;
+`/predict` accepts POST requests containing an image, not browser GET requests.
 
 ## Vercel project settings
 

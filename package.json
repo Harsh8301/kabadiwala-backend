@@ -6,7 +6,7 @@
     "node": "24.x"
   },
   "scripts": {
-    "build": "node --check api/predict.js && node --check api/health.js && node --check api/marketplace.js && node --check lib/marketplace.js && node --check lib/config.js && node --check lib/http.js && node --check lib/detection-handler.js && node --check lib/multipart.js && node --check lib/roboflow.js && node --check tests/roboflow.test.js",
+    "build": "node --check api/predict.js && node --check api/health.js && node --check api/index.js && node --check api/marketplace.js && node --check lib/marketplace.js && node --check lib/config.js && node --check lib/http.js && node --check lib/detection-handler.js && node --check lib/multipart.js && node --check lib/roboflow.js && node --check tests/roboflow.test.js",
     "test": "node tests/roboflow.test.js && node tests/marketplace.test.js && node tests/integration.test.js",
     "setup:db": "node scripts/setup.js",
     "check": "npm run build && npm test"

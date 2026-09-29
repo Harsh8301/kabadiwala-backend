@@ -76,9 +76,10 @@ test("maps supported classes and unknowns", () => {
   assert.equal(mapRoboflowClass("lcd panel"), "lcd");
   assert.equal(mapRoboflowClass("magnet assembly"), "magnets");
   assert.equal(mapRoboflowClass("mixed plastics"), "mixed_plastics");
-  assert.equal(mapRoboflowClass("phone"), "other");
-  assert.equal(mapRoboflowClass("watch"), "other");
-  assert.equal(mapRoboflowClass("tablet"), "other");
+  assert.equal(mapRoboflowClass("phone"), "device_phone");
+  assert.equal(mapRoboflowClass("watch"), "device_watch");
+  assert.equal(mapRoboflowClass("tablet"), "device_tablet");
+  assert.equal(mapRoboflowClass("mouse"), "device_mouse");
   assert.equal(mapRoboflowClass("plastic bottle"), "other");
 });
 
@@ -93,6 +94,20 @@ test("selects highest reliable supported prediction", () => {
   ] });
   assert.equal(result.categoryId, "battery");
   assert.equal(result.status, "detected");
+});
+
+test("categorizes whole devices without assigning them a material", () => {
+  const result = normalizeRoboflowResponse({ predictions: [
+    { class: "tablet", confidence: 0.53 },
+    { class: "watch", confidence: 0.15 }
+  ] }, 0);
+  assert.equal(result.success, true);
+  assert.equal(result.status, "possible");
+  assert.equal(result.categoryId, "device_tablet");
+  assert.equal(result.className, "tablet");
+  assert.equal(selectPrimaryPrediction([
+    { categoryId: "device_phone", confidence: 0.1 }
+  ], 0), null);
 });
 
 test("uses area as tie breaker for close confidence", () => {
@@ -197,7 +212,7 @@ test("normalizes a successful provider response", async () => {
 });
 
 test("unsupported provider class remains uncertain", () => {
-  const result = normalizeRoboflowResponse({ predictions: [{ class: "phone", confidence: 0.91 }] });
+  const result = normalizeRoboflowResponse({ predictions: [{ class: "plastic bottle", confidence: 0.91 }] });
   assert.equal(result.status, "uncertain");
   assert.equal(result.categoryId, null);
 });
